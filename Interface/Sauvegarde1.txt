@@ -1,0 +1,27 @@
+
+
+
+"""
+    # User input for ICAO code
+    icao_code = st.text_input("Enter an ICAO code:")
+
+    if icao_code:
+        # Step 1: Find the corresponding IATA code
+        filtered_icao = data_icao[data_icao["icao_code"] == icao_code]
+
+        if not filtered_icao.empty:
+            iata_code = filtered_icao["iata_code"].iloc[0]
+            st.success(f"IATA code found: {iata_code}")
+
+            # Step 2: Search for details in the second file using the IATA code
+            airplane_info = data_airplanes[data_airplanes["iata_code"] == iata_code]
+
+            if not airplane_info.empty:
+                st.success(f"Airplane details for IATA code '{iata_code}':")
+                st.write(airplane_info)
+            else:
+                st.warning(f"No airplane details found for IATA code '{iata_code}'.")
+        else:
+            st.warning(f"No IATA code found for ICAO code '{icao_code}'.")
+"""
+

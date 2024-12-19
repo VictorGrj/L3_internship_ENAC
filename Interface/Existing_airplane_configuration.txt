@@ -1,0 +1,673 @@
+from tkinter import Variable
+import streamlit as st
+import pandas as pd
+from itables.streamlit import interactive_table
+from st_aggrid import AgGrid
+from gam_copy import GAM
+from gam_utils import unit
+import matplotlib.pyplot as plt
+
+
+# Load data from the Excel file
+def load_data(file):
+    '''Read Excel files'''
+    return pd.read_excel(file)
+
+# Fonction pour afficher le tableau
+def render_table(df, render_with, classes=None, buttons=None, style=None):
+    if render_with == "st.dataframe":
+        st.dataframe(df)
+    elif render_with == "streamlit-aggrid":
+        AgGrid(df)
+    elif render_with == "itables":
+        it_args = {"classes": classes, "buttons": buttons, "style": style}
+        interactive_table(df, **it_args)
+
+
+def setup():
+    if "VARG" not in st.session_state:
+        st.session_state.VARG = []
+
+
+    # Load the Excel files
+    #file = "airplane_database_copieVF_test.csv"  # File with airplane details
+    file = "airplane_database_copieVF.xlsx"
+
+    try:
+        data_airplanes= load_data(file)
+    except FileNotFoundError as e:
+        st.error(f"File not found: {e.filename}")
+
+    prop = ["airplane_type",  "name", "Constructor", "icao_code", "iata_code", "n_pax", "owe", "mtow", "mlw", "max_fuel", "n_engine",
+            "engine_type", "thruster_type", "powerplant", "bpr", "energy_type", "max_power", "max_thrust", "cruise_speed", "cruise_altitude","nominal_range"]
+
+
+    st.header("How would you like to search the name of your airplane?")
+    # Choice: Use aircraft type or skip directly to ICAO
+    search_option = st.radio(
+        "",
+        ("By Aircraft Constructor and ICAO Code", "By Aircraft Type and ICAO Code", "By ICAO Code Only")
+    )
+
+
+    if search_option == "By Aircraft Type and ICAO Code":
+        # Dropdown for aircraft type
+        atp = [" ", "General", "Commuter", "Regional",
+                "Short Medium", "Long Range"]
+        corres = ["", "general", "commuter", "regional",
+                    "short_medium", "long_range"]
+
+        selected_type1 = st.selectbox("Which type of aircraft do you have?", atp)
+        selected_type = ""
+        for i in range(len(atp)):
+            if atp[i] == selected_type1:
+                selected_type = corres[i]
+
+        if selected_type1 != " ":
+            st.success(f"You selected: {selected_type1}")
+            data_airplanes_type = data_airplanes[data_airplanes["airplane_type"] == selected_type]
+            if not data_airplanes_type.empty:
+                combined_data = pd.DataFrame({"Propriété": prop})
+
+                for idx, (_, row) in enumerate(data_airplanes_type.iterrows(), start=1):
+                    column_name = f"Aircraft {idx}"
+                    combined_data[column_name] = [row.get(p, "N/A") for p in prop]
+                st.dataframe(combined_data, hide_index=True)
+                #render_table(combined_data, "streamlit-aggrid")
+
+
+            # User input for ICAO code
+            icao_code = st.text_input("Enter an ICAO code:")
+
+            if icao_code:
+                # Find the IATA code from the ICAO code
+                filtered_icao = data_airplanes[data_airplanes["icao_code"] == icao_code]
+
+                if not filtered_icao.empty:
+                    iata_code = filtered_icao["iata_code"].iloc[0]
+                    st.success(f"IATA code found: {iata_code}")
+
+                    # Filter airplane details by IATA code and selected type
+                    airplane_info = data_airplanes[
+                        (data_airplanes["iata_code"] == iata_code) &
+                        (data_airplanes["airplane_type"] == selected_type)
+                    ]
+
+                    if not airplane_info.empty:
+                        st.success(f"Airplane details for IATA code '{iata_code}' and type '{selected_type1}':")
+                        combined_data = pd.DataFrame({"Propriété": prop})
+
+                        for idx, (_, row) in enumerate(airplane_info.iterrows(), start=1):
+                            column_name = f"Aircraft {idx}"
+                            combined_data[column_name] = [row.get(p, "N/A") for p in prop]
+
+                        st.dataframe(combined_data, hide_index=True)
+
+                    else:
+                        st.warning(f"No airplane details found for IATA code '{iata_code}' and type '{selected_type1}'.")
+                else:
+                    st.warning(f"No IATA code found for ICAO code '{icao_code}'.")
+        else:
+            st.warning("Please select an aircraft type to proceed.")
+
+    elif search_option == "By ICAO Code Only":
+        # User input for ICAO code without selecting type
+        icao_code = st.text_input("Enter an ICAO code:")
+
+        if icao_code:
+            # Find the IATA code from the ICAO code
+            filtered_icao = data_airplanes[data_airplanes["icao_code"] == icao_code]
+
+            if not filtered_icao.empty:
+                iata_code = filtered_icao["iata_code"].iloc[0]
+                st.success(f"IATA code found: {iata_code}")
+
+                # Retrieve all airplane details for the matched IATA code
+                airplane_info = data_airplanes[data_airplanes["iata_code"] == iata_code]
+
+                if not airplane_info.empty:
+                    st.success(f"Airplane details for IATA code '{iata_code}':")
+                    combined_data = pd.DataFrame({"Propriété": prop})
+
+                    for idx, (_, row) in enumerate(airplane_info.iterrows(), start=1):
+                        column_name = f"Aircraft {idx}"
+                        combined_data[column_name] = [row.get(p, "N/A") for p in prop]
+
+                    st.dataframe(combined_data, hide_index=True)
+                else:
+                    st.warning(f"No airplane details found for IATA code '{iata_code}'.")
+            else:
+                st.warning(f"No IATA code found for ICAO code '{icao_code}'.")
+        else:
+            st.warning("Please select an ICAO code to proceed.")
+
+    elif search_option == "By Aircraft Constructor and ICAO Code":
+        # List of the name of the aircraft construstor
+        constructor = [" "]
+        errors = ["string", "None", "unknown"]
+        for element in data_airplanes["Constructor"]:
+            if element not in errors:
+                if element not in constructor:
+                    constructor.append(element)
+
+        # Chose of the constructor
+        constructor1 = st.selectbox('From which constructor your plane come?',
+                                constructor)
+
+        if constructor1 != " ":
+            st.success(f"You selected: {constructor1}")
+            data_airplanes_cons = data_airplanes[data_airplanes["Constructor"] == constructor1]
+            if not data_airplanes_cons.empty:
+                combined_data = pd.DataFrame({"Propriété": prop})
+                for idx, (_, row) in enumerate(data_airplanes_cons.iterrows(), start=1):
+                    column_name = f"Aircraft {idx}"
+                    combined_data[column_name] = [row.get(p, "N/A") for p in prop]
+
+                st.dataframe(combined_data, hide_index=True)
+
+
+            # User input for ICAO code
+            icao_code = st.text_input("Enter an ICAO code:")
+
+            if icao_code:
+                # Find the IATA code from the ICAO code
+                filtered_icao = data_airplanes[data_airplanes["icao_code"] == icao_code]
+
+                if not filtered_icao.empty:
+                    iata_code = filtered_icao["iata_code"].iloc[0]
+                    st.success(f"IATA code found: {iata_code}")
+
+                    # Filter airplane details by IATA code and selected construtor
+                    airplane_info = data_airplanes[
+                        (data_airplanes["iata_code"] == iata_code) &
+                        (data_airplanes["Constructor"] == constructor1)
+                    ]
+
+                    if not airplane_info.empty:
+                        st.success(f"Airplane details for IATA code '{iata_code}' and constructor '{constructor1}':")
+                        combined_data = pd.DataFrame({"Propriété": prop})
+
+                        for idx, (_, row) in enumerate(airplane_info.iterrows(), start=1):
+                            column_name = f"Aircraft {idx}"
+                            combined_data[column_name] = [row.get(p, "N/A") for p in prop]
+
+                        st.dataframe(combined_data, hide_index=True)
+
+                    else:
+                        st.warning(f"No airplane details found for IATA code '{iata_code}' and constructor '{constructor1}'.")
+                else:
+                    st.warning(f"No IATA code found for ICAO code '{icao_code}'.")
+        else:
+            st.warning("Please select an aircraft constructor to proceed.")
+
+
+    # User input for airplane name
+    airplane = st.text_input("Enter the name of your aircraft (you can use the search tool just above): ")
+    final_data = []
+    if data_airplanes[data_airplanes["name"] == airplane].empty:
+        st.warning(f"No airplane found for the name '{airplane}'.")
+    if airplane != "" and not data_airplanes[data_airplanes["name"] == airplane].empty and data_airplanes[data_airplanes["name"] == airplane][data_airplanes["airplane_type"] == "business"].empty:
+        st.success(f"Airplane found: {airplane}")
+
+        # Data of the plane the user search
+        final_data = data_airplanes[data_airplanes["name"] == airplane]
+        final = pd.DataFrame({"Propriété": prop})
+        
+        for idx, (_, row) in enumerate(final_data.iterrows(), start=1):
+            column_name = f"Aircraft {idx}"
+            final[column_name] = [row.get(p, "N/A") for p in prop]
+        
+        st.dataframe(final, hide_index=True)
+
+
+        # Add a slider for aircraft range 
+        st.write("")
+
+        st.header("Make a configuration for your tune " + airplane)
+        st.write("### Design an tune " + airplane + " like airplane")
+        dis = {"general": 500, "commuter": 1500, "regional": 4500,
+                "short_medium": 8000, "long_range": 15000}
+        for key in dis:
+            test = final_data[final_data["airplane_type"] == key]
+            if not test.empty:
+                if dis[key] - 1500 >= 0:
+                    range_slider = st.slider("Range of the aircraft (in km):", dis[key] - 1500, dis[key] + 1500, dis[key], 10)
+                    st.write(f"Selected range: {range_slider} km")
+                    range_slider = int(st.text_input("Select the precise design range you require ", range_slider))
+                else:
+                    range_slider = st.slider("Range of the aircraft (in km):", 0, dis[key] + 1500, dis[key], 10)
+                    st.write(f"Selected range: {range_slider} km")
+                    range_slider = int(st.text_input("Select the precise design range you require ", range_slider))
+
+
+        # Initialization of gam entries
+        power_system = {}
+        design_mission = {}
+        gam = GAM()
+
+
+        # Complete design_mission
+        # Complete category
+        category = ["general", "commuter", "regional", "short_medium", "long_range"]
+        for elec in category:
+            test_cat = final_data[final_data["airplane_type"] == elec]
+            if not test_cat.empty:
+                design_mission["category"] = elec
+
+        # Exeption
+        errors = ["string", "mach", "None", "unknown", "int", "m", "deg", "m2", "kg", "no_dim", "kW", "N", "km/h", "ft", "km"]
+
+        # Complete npax and engine-count
+        maxi = 0
+
+        for element in data_airplanes["n_pax"]:
+            if element not in errors:
+                if maxi < int(element):
+                    maxi = int(element)
+        maxi +=2
+        for i in range(maxi):
+            test_pax = final_data[final_data["n_pax"] == i]
+            if not test_pax.empty:
+                design_mission["npax"] = i
+
+
+        # Complete speed
+        for eles in data_airplanes["cruise_speed"]:
+            if eles not in errors:
+                test_speed = final_data[final_data["cruise_speed"] == eles]
+                if not test_speed.empty:
+                    design_mission["speed"] = eles
+
+        # Complete range
+        design_mission["range"] = unit.convert_from("km", range_slider)
+
+        # Complete altitude
+        for elea in data_airplanes["cruise_altitude"]:
+            if elea not in errors:
+                test_alt = final_data[final_data["cruise_altitude"] == elea]
+                if not test_alt.empty:
+                    design_mission["altitude"] = elea
+
+        # Complete power_system
+        # Complete energy type
+        for elee in data_airplanes["energy_type"]:
+            if elee not in errors:
+                test_energy = final_data[final_data["energy_type"] == elee]
+                if not test_energy.empty:
+                    power_system["energy_type"] = elee
+
+        # Complete engine count
+        for i in range(maxi):
+            test_nb_engine = final_data[final_data["n_engine"] == i]
+            if not test_nb_engine.empty:
+                power_system["engine_count"] = i
+
+        # Complete engine type
+        for eleeng in data_airplanes["engine_type"]:
+            if eleeng not in errors:
+                test_engine = final_data[final_data["engine_type"] == eleeng]
+                if not test_engine.empty:
+                    power_system["engine_type"] = eleeng
+
+        # Complete thruster type
+        for elet in data_airplanes["thruster_type"]:
+            if elet not in errors:
+                test_thruster = final_data[final_data["thruster_type"] == elet]
+                if not test_thruster.empty:
+                    power_system["thruster_type"] = elet
+
+        # Complete bpr
+        for eleb in data_airplanes["bpr"]:
+            if eleb not in errors:
+                test_bpr = final_data[final_data["bpr"] == eleb]
+                if not test_bpr.empty:
+                    power_system["bpr"] = eleb
+
+
+
+        st.write("")
+        table_rows = []
+        this_dict = gam.design_airplane(power_system, design_mission)
+        st.write("More information on:")
+
+        Name = st.checkbox("Name")
+        if Name:
+            table_rows.append({
+                    "Property" : "Name",
+                    "Value" : airplane
+                })
+        propulsion = st.checkbox("Propulsion system definition")
+        if propulsion:
+            table_rows.append({
+                "Property": "Engine type",
+                "Value": this_dict["power_system"]["engine_type"]
+            })
+            table_rows.append({
+                "Property": "Energy source",
+                "Value": this_dict["power_system"]["energy_type"]
+            })
+            table_rows.append({
+                "Property": "Thruster type",
+                "Value": this_dict["power_system"]["thruster_type"]
+            })
+            table_rows.append({
+                "Property" : " Number of engine ",
+                "Value" : "%.0f" % this_dict["n_engine"]
+            })
+            table_rows.append({
+                "Property": "By Pass Ratio",
+                "Value": this_dict["by_pass_ratio"]
+            })
+        mission = st.checkbox("Design mission definition")
+        if mission:
+            table_rows.append({
+                "Property" : " Airplane type",
+                "Value" : this_dict["airplane_type"]
+            })
+            table_rows.append({
+                "Property" : " Number of passenger ",
+                "Value" : "%.0f" % this_dict["npax"]
+            })
+            table_rows.append({
+                "Property" : " Design range ",
+                "Value" : "%.0f km" % unit.convert_to("km", this_dict["nominal_range"])
+            })
+            if this_dict["cruise_speed"] > 1:
+                table_rows.append({
+                    "Property" : " Cruise speed ",
+                    "Value" : "%.1f km/h" % unit.convert_to("km/h", this_dict["cruise_speed"]) 
+                })
+            if this_dict["cruise_speed"] <= 1:
+                table_rows.append({
+                    "Property" : " Cruise Mach ",
+                    "Value" : "%.2f" % this_dict["cruise_speed"]
+                })
+            table_rows.append({
+                "Property" : " Cruise altitude ",
+                "Value" : "%.1f ft" % unit.convert_to("ft", this_dict["altitude_data"]["mission"]),
+            })
+        breakdown = st.checkbox("Mass breakdown")
+        if breakdown:
+            table_rows.append({
+                "Property": "MTOW",
+                "Value": "%.0f kg" % this_dict["mtow"]
+            })
+            table_rows.append({
+                "Property": "MZFW",
+                "Value": "%.0f kg" % this_dict["mzfw"]
+            })
+            table_rows.append({
+                "Property": "Payload max",
+                "Value": "%.0f kg" % this_dict["payload_max"]
+            })
+            table_rows.append({
+                "Property": "Maximum payload factor",
+                "Value": "%.3f" % this_dict["max_payload_factor"]
+            })
+            table_rows.append({
+                "Property": "OWE",
+                "Value": "%.0f kg" % this_dict["owe"]
+            })
+            table_rows.append({
+                "Property": "Operator items",
+                "Value": "%.0f kg" % this_dict["op_item"]
+            })
+            table_rows.append({
+                "Property": "MWE",
+                "Value": "%.0f kg" % this_dict["mwe"]
+            })
+            table_rows.append({
+                "Property": "Furnishing",
+                "Value": "%.0f kg" % this_dict["furnishing"]
+            })
+            table_rows.append({
+                "Property": "Standard MWE",
+                "Value": "%.0f kg" % this_dict["std_mwe"]
+            })
+            table_rows.append({
+                "Property": "Propulsion mass",
+                "Value": "%.0f kg" % this_dict["propulsion_mass"]
+            })
+            table_rows.append({
+                "Property": "Energy storage mass",
+                "Value": "%.0f kg" % this_dict["energy_storage_mass"]
+            })
+            table_rows.append({
+                "Property": "Fuel cell system mass",
+                "Value": "%.0f kg" % this_dict["fuel_cell_system_mass"]
+            })
+            table_rows.append({
+                "Property": "Basic MWE",
+                "Value": "%.0f kg" % this_dict["basic_mwe"]
+            })
+            table_rows.append({
+                "Property": "MWE shift",
+                "Value": "%.0f kg" % this_dict["stdm_shift"]
+            })
+        output = st.checkbox("Design mission output")
+        if output:
+            table_rows.append({
+                "Property": "Nominal pax mass allowance",
+                "Value": "%.1f kg" % this_dict["mpax"]
+            })
+            table_rows.append({
+                "Property": "Nominal payload delta",
+                "Value": "%.0f kg" % this_dict["delta_payload"]
+            })
+            table_rows.append({
+                "Property": "Nominal payload",
+                "Value": "%.0f kg" % this_dict["payload"]
+            })
+            table_rows.append({
+                "Property": "Nominal mission time",
+                "Value": "%.1f h" % unit.h_s(this_dict["nominal_time"])
+            })
+
+            table_rows.append({
+                "Property": "Mission fuel",
+                "Value": "%.0f kg" % this_dict["mission_fuel"]
+            })
+            table_rows.append({
+                "Property": "Reserve fuel",
+                "Value": "%.0f kg" % this_dict["reserve_fuel"]
+            })
+            table_rows.append({
+                "Property": "Total fuel",
+                "Value": "%.0f kg" % this_dict["total_fuel"]
+            })
+            table_rows.append({
+                "Property": "Fuel consumption",
+                "Value": "%.2f L/pax/100km" % unit.convert_to("L", this_dict["fuel_consumption"] * unit.m_km(100))
+            })
+            table_rows.append({
+                "Property": "Mission energy",
+                "Value": "%.0f kWh" % unit.kWh_J(this_dict["mission_enrg"])
+            })
+            table_rows.append({
+                "Property": "Reserve energy",
+                "Value": "%.0f kWh" % unit.kWh_J(this_dict["reserve_enrg"])
+            })
+            table_rows.append({
+                "Property": "Total energy",
+                "Value": "%.0f kWh" % unit.kWh_J(this_dict["total_energy"])
+            })
+            table_rows.append({
+                "Property": "Energy consumption",
+                "Value": "%.2f kWh/pax/100km" % unit.kWh_J(this_dict["enrg_consumption"] * unit.m_km(100))
+            })
+            table_rows.append({
+                "Property": "Wake Turbulence Category",
+                "Value": this_dict["wake_turbulence_class"]
+            })
+        factor = st.checkbox("Factors & Efficiencies")
+        if factor:
+            table_rows.append({
+                "Property": "Max power",
+                "Value": "%.0f kW" % unit.kW_W(this_dict["max_power"])
+            })
+            table_rows.append({
+                "Property": "Standard mass factor",
+                "Value": "%.4f" % this_dict["stdm_factor"]
+            })
+            table_rows.append({
+                "Property": "Aerodynamic efficiency factor",
+                "Value": "%.4f" % this_dict["aero_eff_factor"]
+            })
+            table_rows.append({
+                "Property": "Aerodynamic efficiency (L/D)",
+                "Value": "%.2f" % this_dict["aerodynamic_efficiency"]
+            })
+            table_rows.append({
+                "Property": "Propulsion system efficiency",
+                "Value": "%.3f" % this_dict["propulsion_system_efficiency"]
+            })
+            table_rows.append({
+                "Property": "Storage energy density",
+                "Value": "%.0f Wh/kg" % unit.Wh_J(this_dict["storage_energy_density"])
+            })
+            table_rows.append({
+                "Property": "Propulsion power density",
+                "Value": "%.2f kW/kg" % unit.kW_W(this_dict["propulsion_power_density"])
+            })
+            table_rows.append({
+                "Property": "Structural factor (OWE/MTOW)",
+                "Value": "%.2f" % this_dict["structural_factor"]
+            })
+            table_rows.append({
+                "Property": "Energy efficiency factor, P.K/E",
+                "Value": "%.2f pax.km/kWh" % unit.convert_to("km/kWh", this_dict["pk_o_enrg"])
+            })
+            table_rows.append({
+                "Property": "Mass efficiency factor, P.K/M",
+                "Value": "%.2f pax.km/kg" % unit.convert_to("km/kg", this_dict["pk_o_mass"])
+            })
+        
+        st.write("")
+        table = pd.DataFrame(table_rows)
+        st.dataframe(table, width=600, column_config={"Property": {"width": 300}, "Value": {"width": 300},})
+
+        st.write("")
+        st.write("Compute and build the Payload-Range of the airplane")
+        two_dict = gam.build_payload_range(this_dict)    # Compute payload-range data and add them in ac_dict
+        left_column4 , right_column4 = st.columns(2)
+
+        if 'payload_info' not in st.session_state:
+            st.session_state.payload_info = False
+
+        with left_column4:
+            if st.button("Show payload-range information"):
+                st.session_state.payload_info = True
+        with right_column4:
+            if st.button("Hide payload-range information"):
+                st.session_state.payload_info = False
+
+        if st.session_state.payload_info :
+            gam.print_payload_range(this_dict)    # Print payload-range data
+
+
+        st.write("")
+        st.write("Do you want to save this configuration?")
+        left_column3, right_column3 = st.columns(2)
+        with left_column3:
+            if st.button("Yes, save the configuration"):
+                tup = (this_dict, two_dict, table)
+                st.session_state.VARG.append(tup)
+                st.success(f"Configuration {len(st.session_state.VARG)} saved!")
+
+        st.write("")
+        st.write("### Saved Configurations")
+        if st.session_state.VARG:
+            for idx, config in enumerate(st.session_state.VARG, start=1):
+                st.write(f"**Configuration {idx}:**")
+                left_column5, right_column5 = st.columns(2)
+                if "Configuration" not in st.session_state:
+                    st.session_state.Configuration = False
+                with left_column5:
+                    if st.button(f"Show the configuration {idx}"):
+                        st.session_state.Configuration = True
+                with right_column5:
+                    if st.button(f"Hide the configuration {idx}"):
+                        st.session_state.Configuration = False
+                if st.session_state.Configuration:
+                    st.dataframe(config[2], width=600)
+                    #st.json(config[0])
+
+                if st.button(f"Delete Configuration {idx}"):
+                    st.session_state.deleted_index = idx - 1
+        else:
+            st.info("No configurations saved yet.")
+
+        if "deleted_index" in st.session_state:
+            del st.session_state.VARG[st.session_state.deleted_index]
+            del st.session_state.deleted_index
+            st.rerun()
+
+
+        with right_column3:
+            st.button("No, delete this configuration")
+
+        st.write("")
+        st.header("Show the result for " + airplane + "and with your configuration")
+
+        if 'info_all' not in st.session_state:
+            st.session_state.info_all = False
+
+        left_column6, right_column6 = st.columns(2)
+
+        with left_column6:
+            if st.button("Show all of the informations about the configurations"):
+                st.session_state.info_all = True
+        
+        with right_column6:
+            if st.button("Hide all the informations about the configurations"):
+                st.session_state.info_all = False
+
+        if st.session_state.info_all:
+            if st.session_state.VARG:
+                consolidated_data = {}
+                for idx, config in enumerate(st.session_state.VARG, start=1):
+                    config_table = config[2]
+                    for _, row in config_table.iterrows():
+                        property_name = row["Property"]
+                        value = row["Value"]
+                        if property_name not in consolidated_data:
+                            consolidated_data[property_name] = {}
+                        consolidated_data[property_name][f"Value{idx}"] = value
+
+                consolidated_table = pd.DataFrame.from_dict(consolidated_data, orient="index")
+                consolidated_table.reset_index(inplace=True)
+                consolidated_table.rename(columns={"index": "Property"}, inplace=True)
+
+                st.dataframe(consolidated_table, width=1000)
+
+            else:
+                st.info("No configurations to display.")
+
+        config_list = []
+        if st.session_state.VARG:
+            for idx, config in enumerate(st.session_state.VARG, start=1):
+                config_list.append(config[0])
+            gam.payload_range_graph(config_list)
+
+    else :
+        st.warning("Please write an aircraft name to proceed.")
+
+
+
+def main():
+    '''Main, display the dashboard'''
+    st.set_page_config(
+        page_title="Dashboard for Airplane Fuel Consumption",
+        page_icon=":airplane:",
+        layout="centered",
+    )
+    # App title
+    st.title("Dashboard for Airplane Fuel Consumption with an existing airplane")
+    setup()
+
+
+
+
+# Run the application
+if __name__ == "__main__":
+    main()
